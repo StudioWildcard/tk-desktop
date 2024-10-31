@@ -374,6 +374,7 @@ class DesktopWindow(SystrayWindow):
         # Do not put anything after this line, this can kick-off a Python process launch, which should
         # be done only when the dialog is fully initialized.
         self._load_settings()
+        self._handle_version_check()
 
     def _debug_toggled(self, state):
         """

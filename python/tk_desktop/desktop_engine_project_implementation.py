@@ -119,6 +119,37 @@ class DesktopEngineProjectImplementation(object):
             # call back to the site implementation to show the banner
             self._project_comm.call_no_response("update_banners", banner_message, banner_id)
 
+        # self._check_desktop_version()
+
+
+    def _check_desktop_version(self):
+        """
+        Checks the current Desktop version and displays a banner if it's less than 1.9.
+        """
+        try:
+            # Attempt to find the ShotGrid Desktop version in a couple of potential locations
+            current_version = "1.9"
+            engine = sgtk.platform.current_engine()
+            # logger.debug(">>>>>>>>>>>  Current Engine: %s" % engine)
+            if engine:
+                current_version = engine.app_version
+            logger.debug(">>>>>>>>>>>  Current Desktop version: %s" % current_version)
+            required_version = "1.9"
+
+            if current_version and Version(str(current_version)) <= Version(str(required_version)):
+                banner_message = (
+                    "Autodesk disabled auto-updating due to Python version change. "
+                    "Please download the new version <a href='https://ark.shotgunstudio.com/page/sg_desktop_download'>here</a>."
+                )
+                self._project_comm.call_no_response("update_banners", banner_message, "desktop_version_check")
+            else:
+                # Log a warning if the version could not be determined
+                self._engine.logger.debug("Could not determine the ShotGrid Desktop version.")
+        except Exception as e:
+            # Log an error if there was an exception
+            logger.debug("Error checking the ShotGrid Desktop version: %s" % e)
+
+
     def _connect_to_server(self):
         """
         Connects to the other process's server and starts our own.
