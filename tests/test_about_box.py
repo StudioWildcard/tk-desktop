@@ -10,8 +10,9 @@
 
 import os
 import pytest
-from six.moves.html_parser import HTMLParser
-from six.moves.urllib import request
+import time
+from html.parser import HTMLParser
+from urllib import request
 
 
 @pytest.fixture
@@ -34,6 +35,7 @@ def licence_file_links(license_file):
     Given the path to the licence html file, it extracts the URL link out and
     returns them in a list.
     """
+
     # This class was taken and modified from this SO post:
     # https://stackoverflow.com/a/3075561/4223964
     class MyHTMLParser(HTMLParser):
@@ -50,7 +52,7 @@ def licence_file_links(license_file):
 
     # Open the licence file and read the parse the contents.
     parser = MyHTMLParser()
-    with open(license_file, "r") as f:
+    with open(license_file, "r", encoding="utf-8") as f:
         parser.feed(f.read())
 
     # We expect to atleast get one URL
@@ -62,27 +64,46 @@ def test_3rd_party_links(licence_file_links):
     """
     Check all found urls are valid and can accessed.
     """
+    max_retries = 5
+    error_message = ""
     for url in licence_file_links:
-        try:
-            r = request.Request(
-                url,
-                headers={"Accept-Language": "en", "User-Agent": "Mozilla/5.0"},
-            )
+        retry_delay = 1
+        for _ in range(max_retries):
+            try:
+                r = request.Request(
+                    url,
+                    headers={"Accept-Language": "en", "User-Agent": "Mozilla/5.0"},
+                )
 
-            contents = request.urlopen(r).read()
-        except Exception as e:
-            raise pytest.fail("Failed to open {0}, error: {1}".format(url, e))
+                contents = request.urlopen(r).read()
+                break
+            except Exception as e:
+                time.sleep(retry_delay)
+                retry_delay *= 2
+                error_message = str(e)
+        else:
+            # If all retries fail, raise an exception
+            if "403: Forbidden" in error_message:
+                pytest.skip(
+                    "Failed to open {0}, error: {1}. This is likely due to GitHub "
+                    "blocking the request. Please check the URL in a web browser.".format(
+                        url, error_message
+                    )
+                )
+
+            raise pytest.fail(
+                "Failed to open {0}, error: {1}".format(url, error_message)
+            )
 
 
 @pytest.mark.parametrize(
     "expected_url",
     [
         "https://github.com/shotgunsoftware/python-api/tree/master/software_credits",
-        "https://github.com/shotgunsoftware/tk-3dsmax/tree/master/software_credits",
-        "https://github.com/shotgunsoftware/tk-3dsmaxplus/tree/master/software_credits",
         "https://github.com/shotgunsoftware/tk-alias/tree/master/software_credits",
         "https://github.com/shotgunsoftware/tk-core/tree/master/software_credits",
         "https://github.com/shotgunsoftware/tk-framework-adobe/tree/master/software_credits",
+        "https://github.com/shotgunsoftware/tk-framework-alias/tree/master/software_credits",
         "https://github.com/shotgunsoftware/tk-framework-desktopclient/tree/master/software_credits",
         "https://github.com/shotgunsoftware/tk-framework-desktopserver/tree/master/software_credits",
         "https://github.com/shotgunsoftware/tk-houdini/tree/master/software_credits",

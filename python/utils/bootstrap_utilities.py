@@ -18,13 +18,12 @@ As such, the site-level engine has control over how the project-level tk-desktop
 engine is bootstrapped and finalized.
 """
 
+import importlib.util
+import inspect
+import logging
 import os
 import sys
 import traceback
-import imp
-import logging
-import inspect
-import pprint
 
 
 class ProxyLoggingHandler(logging.Handler):
@@ -37,9 +36,7 @@ class ProxyLoggingHandler(logging.Handler):
         :param proxy: Connection to the main process.
         :type proxy: rpc.RPCProxy
         """
-        # Call the __init__ directly since Python 2.6's logging.Handler doesn't
-        # derive from object and hence doesn't support 'super'.
-        logging.Handler.__init__(self)
+        super().__init__()
         self._proxy = proxy
 
     def emit(self, record):
@@ -64,9 +61,7 @@ class ProxyLoggingHandler(logging.Handler):
         else:
             msg = record.msg
 
-        # Do the string interpolation this side of the communication. This is important
-        # because Python 2 and 3 may serialize objects differently and Toolkit objects
-        # may be coming from different versions of the API.
+        # Perform string interpolation safely
         if record.args:
             msg = msg % record.args
 
@@ -85,27 +80,19 @@ def _create_proxy(data):
     :returns: A connection back to the PTR desktop app.
     """
     # Connect to the main desktop process so we can send updates to it.
-    # We're not guanranteed if the py or pyc file will be passed back to us
+    # We're not guaranteed if the py or pyc file will be passed back to us
     # from the desktop due to write permissions on the folder.
-    rpc_lib = imp.load_source("rpc", data["rpc_lib_path"])
+
+    spec = importlib.util.spec_from_file_location("rpc", data["rpc_lib_path"])
+    if spec is None or spec.loader is None:
+        raise ImportError(
+            "Failed to load the rpc module from {}".format(data["rpc_lib_path"])
+        )
+    rpc_lib = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rpc_lib)
     return rpc_lib.RPCProxy(
         data["proxy_data"]["proxy_pipe"], data["proxy_data"]["proxy_auth"]
     )
-
-
-def _ensure_no_unicode(obj):
-    """
-    Looks through the entire object and coerces unicode obj to str in Python 2.
-    """
-    if isinstance(obj, list):
-        return [_ensure_no_unicode(item) for item in obj]
-    elif isinstance(obj, dict):
-        return {_ensure_no_unicode(k): _ensure_no_unicode(v) for k, v in obj.items()}
-    # We can't use six here because Toolkit may not have been imported yet.
-    elif sys.version_info[0] == 2 and isinstance(obj, unicode):
-        return obj.encode("utf8")
-    else:
-        return obj
 
 
 def _enumerate_per_line(items):
@@ -185,9 +172,6 @@ class Bootstrap(object):
         :param data: Dictionary of data passed down from the main desktop process.
         """
         # Extract the relevant information from the data
-        # The data was unpickled by standard pickle instead of Toolkit's, so there
-        # could be unicode when going from Python 3 to Python 2.
-        data = _ensure_no_unicode(data)
         self._raw_data = data
         self._proxy_data = data["proxy_data"]
         self._manager_settings = data["manager_settings"]
@@ -378,9 +362,6 @@ def handle_error(data, proxy=None):
         error to the server. If a proxy is not given, a client connection
         will be created on the fly.
     """
-    # The data was unpickled by standard pickle instead of Toolkit's, so there
-    # could be unicode when going from Python 3 to Python 2.
-    data = _ensure_no_unicode(data)
     # build a message for the GUI signaling that an error occurred
     exc_type, exc_value, exc_traceback = sys.exc_info()
 
@@ -416,3 +397,71 @@ def handle_error(data, proxy=None):
             proxy.close()
         except Exception:
             pass
+
+
+def logger_via_proxy(data, message):
+    """
+    Sends a log message to tk-desktop via the RPC proxy.
+
+    This function uses the RPC proxy to send log messages to the main tk-desktop process.
+    It is particularly useful for logging messages before the engine is fully initialized
+    or when direct access to the tk-desktop logging system is not available.
+
+    :param data: A dictionary containing proxy connection details, including the path
+                 to the RPC library and proxy authentication information.
+    :param message: The log message to send to tk-desktop.
+    """
+    if data["core_python_path"] not in sys.path:
+        sys.path.insert(0, data["core_python_path"])
+    import sgtk
+
+    proxy = _create_proxy(data)
+    handler = ProxyLoggingHandler(proxy)
+    sgtk.LogManager().initialize_custom_handler(handler)
+    logger = sgtk.LogManager.get_logger(__file__)
+    logger.error(message)
+    proxy.close()
+
+
+def execute_pre_initialization_hook(data):
+    """
+    Executes the 'hook_pre_initialization' hook.
+
+    This function dynamically loads and executes the 'hook_pre_initialization' hook,
+    which is responsible for performing early initialization tasks before the engine
+    is fully initialized. These tasks may include importing necessary libraries,
+    setting environment variables, or preparing the environment to ensure compatibility
+    with PySide6 and other dependencies.
+
+    If a custom hook is not defined in the advanced configuration (`tk-desktop.yml`),
+    the function falls back to dynamically loading the default hook located in the
+    'hooks' directory of the project.
+
+    :param data: A dictionary containing configuration and runtime details, including:
+                 - `hook_pre_initialization`: The path of the configuration pipeline.
+                 - `proxy_data`: Proxy connection details for logging.
+                 - `rpc_lib_path`: Path to the RPC library for communication.
+    """
+
+    try:
+        hook_path = data.get("hook_pre_initialization")
+        if not hook_path:
+            return
+
+        # Dynamically load and execute the hook
+        spec = importlib.util.spec_from_file_location("pre_initialization", hook_path)
+        hook_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook_module)
+
+        # Execute the `execute` method of the `PreInitialization` class
+        hook_class = getattr(hook_module, "PreInitialization", None)
+        if hook_class is None or not hasattr(hook_class, "execute"):
+            raise AttributeError(
+                f"The 'PreInitialization' class or its 'execute' method is missing in the hook: {hook_path}"
+            )
+        hook_class.execute()
+    except Exception as e:
+        logger_via_proxy(
+            data, f"An error occurred while executing the pre-initialization hook: {e}"
+        )
+        raise

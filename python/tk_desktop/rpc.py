@@ -18,37 +18,27 @@ import threading
 import time
 import traceback
 import multiprocessing.connection
-from multiprocessing.context import AuthenticationError
 
 # We have to import Python's pickle to serialize our data.
 # tk-core's sgtk.util.pickle module assumes too much about the data
 # type that is stored in the pickle and assumes the output of a dump
 # can always be turned into a utf-8 encoded string, which is false.
 # Therefore, we'll simply take the raw pickle and send it over the wire.
-from tank_vendor import six
-from tank_vendor.six.moves import cPickle as py_pickle
-from tank.util import pickle as tk_pickle, is_windows
+import pickle as py_pickle
+from multiprocessing.context import AuthenticationError
 
-try:
-    from tank_vendor import sgutils
-except ImportError:
-    from tank_vendor import six as sgutils
+from tank.util import pickle as tk_pickle, is_windows
 
 if is_windows():
     # This is not ideal. We're importing a private Python module.
     # However, if we didn't and instead relied on pywin32 then we would
     # have to expect clients to install it.
-    if six.PY2:
-        mpc_win32 = multiprocessing.connection.win32
-    else:
-        # If we ever seen this code raising an error with a new Python version,
-        # it's likely because the attribute has changed name.
-        mpc_win32 = multiprocessing.connection._winapi
+    mpc_win32 = multiprocessing.connection._winapi
 
 
 class pickle:
     """
-    Provides a Python 2/3 compatible shim for the pickle module.
+    Provides a Python 3 compatible shim for the pickle module.
 
     Unfortunately, the shim in tk-core returns a string instead
     of a binary string, which would complicate the code here,
@@ -163,14 +153,8 @@ logger = Logger()
 
 class SafePickleConnection(object):
     """
-    Wrap the multiprocessing.connection.Connection object
-    so that any calls to send and recv data is caught
-    and reimplemented in a way that works between Python 2 and
-    Python 3.
-
-    Python 3's Connection.send always uses protocol 3 of pickle,
-    which Python 2 does not understand. So we now force the
-    protocol to 2 all the time.
+    Wraps the multiprocessing.connection.Connection object
+    to ensure safe serialization and deserialization using pickle.
     """
 
     def __init__(self, conn):
@@ -182,10 +166,7 @@ class SafePickleConnection(object):
 
     def recv(self):
         payload = self._conn.recv_bytes()
-        if six.PY3:
-            return py_pickle.loads(payload, encoding="bytes")
-        else:
-            return py_pickle.loads(payload)
+        return py_pickle.loads(payload, encoding="bytes")
 
     def __getattr__(self, name):
         return getattr(self._conn, name)
@@ -228,8 +209,10 @@ class RPCServerThread(threading.Thread):
             family = "AF_PIPE"
         else:
             family = "AF_UNIX"
+        if isinstance(self.authkey, str):
+            self.authkey = self.authkey.encode("utf-8")
         self.server = multiprocessing.connection.Listener(
-            address=None, family=family, authkey=sgutils.ensure_binary(self.authkey)
+            address=None, family=family, authkey=self.authkey
         )
         # grab the name of the pipe
         self.pipe = self.server.address
@@ -405,11 +388,7 @@ class RPCServerThread(threading.Thread):
                 except Exception as e:
                     pass
 
-            if six.PY3:
-                t = threading.Thread(target=touch_server, daemon=True)
-            else:
-                t = threading.Thread(target=touch_server)
-                t.setDaemon(True)
+            t = threading.Thread(target=touch_server, daemon=True)
             t.start()
 
 
@@ -436,7 +415,11 @@ class RPCProxy(object):
         logger.debug("client connecting to to %s", pipe)
         self._connection = SafePickleConnection(
             multiprocessing.connection.Client(
-                address=pipe, family=family, authkey=sgutils.ensure_binary(authkey)
+                address=pipe,
+                family=family,
+                authkey=(
+                    authkey.encode("utf-8") if isinstance(authkey, str) else authkey
+                ),
             )
         )
         logger.debug("client connected to %s", pipe)

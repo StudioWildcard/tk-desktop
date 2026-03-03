@@ -173,7 +173,7 @@ class DesktopEngine(Engine):
             )
         else:
             # fall back on base class implementation
-            return super(DesktopEngine, self).show_panel(
+            return super().show_panel(
                 panel_id, title, bundle, widget_class, *args, **kwargs
             )
 
@@ -241,10 +241,6 @@ class DesktopEngine(Engine):
             QtCore = base["qt_core"]
             DialogBase = base["dialog_base"]
             QtWrapper = base["wrapper"]
-
-            # tell QT to interpret C strings as utf-8
-            utf8 = QtCore.QTextCodec.codecForName("utf-8")
-            QtCore.QTextCodec.setCodecForCStrings(utf8)
 
             # a simple dialog proxy that pushes the window forward
             class ProxyDialog(DialogBase):

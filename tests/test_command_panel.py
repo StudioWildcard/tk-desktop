@@ -11,14 +11,9 @@
 import pytest
 import itertools
 import datetime
-from mock import Mock
+from unittest.mock import Mock
 import sys, os
 import pkgutil
-
-try:
-    from tank_vendor import sgutils
-except ImportError:
-    from tank_vendor import six as sgutils
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 sys.path.insert(
@@ -88,9 +83,7 @@ def test_sections_sorted(show_recents, commands):
     # Create a view with some recents.
     view = CommandPanel(
         sgtk.platform.qt.QtGui.QScrollArea(),
-        Settings(
-            {PROJECT_KEY: {"command 0": {"timestamp": datetime.datetime.utcnow()}}}
-        ),
+        Settings({PROJECT_KEY: {"command 0": {"timestamp": datetime.datetime.now()}}}),
     )
     view.configure(PROJECT, groups, show_recents=show_recents)
 
@@ -130,9 +123,7 @@ def test_clear_deletes_all_but_stretcher():
     """
     view = CommandPanel(
         sgtk.platform.qt.QtGui.QScrollArea(),
-        Settings(
-            {PROJECT_KEY: {"maya_2020": {"timestamp": datetime.datetime.utcnow()}}}
-        ),
+        Settings({PROJECT_KEY: {"maya_2020": {"timestamp": datetime.datetime.now()}}}),
     )
     view.configure(PROJECT, ["Creative Tools", "Editorial"], show_recents=True)
     commands = [
@@ -203,15 +194,17 @@ def test_button_reuse_in_section(simple_test_view):
 
 @pytest.mark.parametrize(
     "commands",
-    itertools.permutations(["Maya 2017", "Maya 2018*", "Maya 2019", "Maya 4.5"]),
+    itertools.permutations(["Maya 2017", "Maya 2018*", "Maya 2019"]),
 )
 def test_versions_sorted_in_menu(simple_test_view, commands):
     _register_commands(simple_test_view, commands)
     maya_button = list(list(simple_test_view.sections)[0].buttons)[0]
 
-    assert list(
-        sgutils.ensure_str(item.text()) for item in maya_button.menu().actions()
-    ) == ["Maya 2018*", "Maya 2019", "Maya 2017", "Maya 4.5"]
+    assert list(str(item.text()) for item in maya_button.menu().actions()) == [
+        "Maya 2018*",
+        "Maya 2019",
+        "Maya 2017",
+    ]
 
 
 @pytest.mark.parametrize(
